@@ -50,6 +50,20 @@ module Billy
       @record_stub_requests = false
       @use_ignore_params = true
     end
+
+    def whitelisted_url?(url)
+      whitelist.any? do |value|
+        if value.is_a?(Regexp)
+          url.to_s =~ value || url.omit(:port).to_s =~ value
+        else
+          value =~ /^#{url.host}(?::#{url.port})?$/
+        end
+      end
+    end
+
+    def blacklisted_path?(path)
+      !path_blacklist.index { |bl| bl.is_a?(Regexp) ? path =~ bl : path.include?(bl) }.nil?
+    end
   end
 
   def self.configure
@@ -58,12 +72,8 @@ module Billy
   end
 
   def self.log(*args)
-    unless config.logger.nil?
-      config.logger.send(*args)
-    end
+    config.logger.send(*args) unless config.logger.nil?
   end
-
-  private
 
   def self.config
     @config ||= Config.new

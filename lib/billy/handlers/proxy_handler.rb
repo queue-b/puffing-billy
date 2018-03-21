@@ -80,7 +80,7 @@ module Billy
       uri = Addressable::URI.parse(url)
       # In isolated environments, you may want to stop the request from happening
       # or else you get "getaddrinfo: Name or service not known" errors
-      blacklisted_path?(uri.path) || !whitelisted_url?(uri)
+      Billy.config.blacklisted_path?(uri.path) || !Billy.config.whitelisted_url?(uri)
     end
 
     def allowed_response_code?(status)
@@ -88,8 +88,10 @@ module Billy
     end
 
     def get_opts(url)
-      opts = { inactivity_timeout: Billy.config.proxied_request_inactivity_timeout,
-               connect_timeout:    Billy.config.proxied_request_connect_timeout }
+      opts = {
+        inactivity_timeout: Billy.config.proxied_request_inactivity_timeout,
+        connect_timeout:    Billy.config.proxied_request_connect_timeout
+      }
 
       if Billy.config.proxied_request_host && !bypass_internal_proxy?(url)
         opts[:proxy] = { host: Billy.config.proxied_request_host,
@@ -123,21 +125,8 @@ module Billy
       # Cache the responses if they aren't whitelisted host[:port]s but always
       # cache blacklisted paths on any hosts
       cacheable_status?(status) &&
-        (!whitelisted_url?(url) || blacklisted_path?(url.path))
-    end
-
-    def whitelisted_url?(url)
-      Billy.config.whitelist.any? do |value|
-        if value.is_a?(Regexp)
-          url.to_s =~ value || url.omit(:port).to_s =~ value
-        else
-          value =~ /^#{url.host}(?::#{url.port})?$/
-        end
-      end
-    end
-
-    def blacklisted_path?(path)
-      !Billy.config.path_blacklist.index { |bl| bl.is_a?(Regexp) ? path =~ bl : path.include?(bl) }.nil?
+        (!Billy.config.whitelisted_url?(url) ||
+          Billy.config.blacklisted_path?(url.path))
     end
 
     def successful_status?(status)
@@ -149,7 +138,10 @@ module Billy
     end
 
     def bypass_internal_proxy?(url)
-      url.include?('localhost') || url.include?('127.') || url.include?('.dev') || url.include?('.fin')
+      url.include?('localhost') ||
+        url.include?('127.') ||
+        url.include?('.dev') ||
+        url.include?('.fin')
     end
   end
 end
