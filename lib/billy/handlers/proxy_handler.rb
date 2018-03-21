@@ -12,65 +12,46 @@ module Billy
     end
 
     def handle_request(method, url, headers, body)
-      if handles_request?(method, url, headers, body)
-        opts = { inactivity_timeout: Billy.config.proxied_request_inactivity_timeout,
-                 connect_timeout:    Billy.config.proxied_request_connect_timeout }
+      method = method.downcase
+      return nil unless handles_request?(method, url, headers, body)
 
-        if Billy.config.proxied_request_host && !bypass_internal_proxy?(url)
-          opts.merge!({ proxy: { host: Billy.config.proxied_request_host,
-                                 port: Billy.config.proxied_request_port }} )
-        end
+      opts = get_opts(url)
 
-        cache_scope = Billy::Cache.instance.scope
-        cache_key = Billy::Cache.instance.key(method.downcase, url, body)
+      req = EventMachine::HttpRequest.new(url, opts)
+      # Dynamically call get/post/put, etc.
+      req = req.send(method, build_request_options(url, headers, body))
 
-        req = EventMachine::HttpRequest.new(url, opts)
-        req = req.send(method.downcase, build_request_options(url, headers, body))
+      if req.error
+        return { error: "Request to #{url} failed with error: #{req.error}" }
+      end
 
-        if req.error
-          return { error: "Request to #{url} failed with error: #{req.error}" }
-        end
+      return nil unless req.response
 
-        if req.response
-          response = process_response(req)
+      response = process_response(req)
+      status = response[:status]
 
-          unless allowed_response_code?(response[:status])
-            if Billy.config.non_successful_error_level == :error
-              return { error: "#{method} Request failed due to response status #{response[:status]} for '#{url}' which was not allowed." }
-            else
-              Billy.log(:warn, "puffing-billy: Received response status code #{response[:status]} for '#{url}'")
-            end
-          end
-
-          if cacheable?(url, response[:headers], response[:status])
-            Billy::Cache.instance.store(
-              cache_key,
-              cache_scope,
-              method.downcase,
-              url,
-              headers,
-              body,
-              response[:headers],
-              response[:status],
-              response[:content]
-            )
-          end
-
-          Billy.log(:info, "puffing-billy: PROXY #{method} succeeded for '#{url}'")
-          return response
+      unless allowed_response_code?(status)
+        if Billy.config.non_successful_error_level == :error
+          return { error: "[#{method.downcase}] #{url} #{status} for '#{url}' which was not allowed." }
+        else
+          Billy.log(:warn, "puffing-billy: Received response status code #{status} for '#{url}'")
         end
       end
-      nil
+
+      cache(url, headers, method, body, response) if cacheable?(url, status)
+
+      Billy.log(:info, "puffing-billy: PROXY #{method} succeeded for '#{url}'")
+      response
     end
 
-  private
+    private
 
     def build_request_options(url, headers, body)
       headers = Hash[headers.map { |k, v| [k.downcase, v] }]
       headers.delete('accept-encoding')
 
       uri = Addressable::URI.parse(url)
-      headers.merge!({'authorization' => [uri.user, uri.password]}) if uri.userinfo
+      headers['authorization'] = [uri.user, uri.password] if uri.userinfo
 
       req_opts = {
         redirects: 0,
@@ -88,7 +69,8 @@ module Billy
         headers: req.response_header.raw,
         content: req.response.force_encoding('BINARY')
       }
-      response[:headers].merge!('Connection' => 'close')
+
+      response[:headers]['Connection'] = 'close'
       response
     end
 
@@ -105,12 +87,43 @@ module Billy
       successful_status?(status)
     end
 
-    def cacheable?(url, _headers, status)
+    def get_opts(url)
+      opts = { inactivity_timeout: Billy.config.proxied_request_inactivity_timeout,
+               connect_timeout:    Billy.config.proxied_request_connect_timeout }
+
+      if Billy.config.proxied_request_host && !bypass_internal_proxy?(url)
+        opts[:proxy] = { host: Billy.config.proxied_request_host,
+                         port: Billy.config.proxied_request_port }
+      end
+
+      opts
+    end
+
+    def cache(url, headers, method, body, response)
+      scope = Billy::Cache.instance.scope
+      key = Billy::Cache.instance.key(method.downcase, url, body)
+
+      Billy::Cache.instance.store(
+        key,
+        scope,
+        method.downcase,
+        url,
+        headers,
+        body,
+        response[:headers],
+        response[:status],
+        response[:content]
+      )
+    end
+
+    def cacheable?(url, status)
       return false unless Billy.config.cache
 
       url = Addressable::URI.parse(url)
-      # Cache the responses if they aren't whitelisted host[:port]s but always cache blacklisted paths on any hosts
-      cacheable_status?(status) && (!whitelisted_url?(url) || blacklisted_path?(url.path))
+      # Cache the responses if they aren't whitelisted host[:port]s but always
+      # cache blacklisted paths on any hosts
+      cacheable_status?(status) &&
+        (!whitelisted_url?(url) || blacklisted_path?(url.path))
     end
 
     def whitelisted_url?(url)
@@ -128,7 +141,7 @@ module Billy
     end
 
     def successful_status?(status)
-      (200..299).include?(status) || status == 304
+      (200..299).cover?(status) || status == 304
     end
 
     def cacheable_status?(status)
