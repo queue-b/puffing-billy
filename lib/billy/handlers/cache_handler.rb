@@ -17,27 +17,23 @@ module Billy
 
     def handle_request(method, url, headers, body)
       method = method.downcase
-      if handles_request?(method, url, headers, body)
-        if (response = cache.fetch(method, url, body))
-          Billy.log(:info, "puffing-billy: CACHE #{method} for '#{url}'")
+      return nil unless handles_request?(method, url, headers, body) &&
+                        (response = cache.fetch(method, url, body))
 
-          if Billy.config.dynamic_jsonp
-            replace_response_callback(response, url)
-          end
+      Billy.log(:info, "puffing-billy: CACHE #{method} for '#{url}'")
 
-          if Billy.config.after_cache_handles_request
-            request = { method: method, url: url, headers: headers, body: body }
-            Billy.config.after_cache_handles_request.call(request, response)
-          end
+      replace_response_callback(response, url) if Billy.config.dynamic_jsonp
 
-          if Billy.config.cache_simulates_network_delays
-            Kernel.sleep(Billy.config.cache_simulates_network_delay_time)
-          end
-
-          return response
-        end
+      if Billy.config.after_cache_handles_request
+        request = { method: method, url: url, headers: headers, body: body }
+        Billy.config.after_cache_handles_request.call(request, response)
       end
-      nil
+
+      if Billy.config.cache_simulates_network_delays
+        Kernel.sleep(Billy.config.cache_simulates_network_delay_time)
+      end
+
+      response
     end
 
     def handles_request?(method, url, _headers, body)
@@ -48,12 +44,13 @@ module Billy
 
     def replace_response_callback(response, url)
       request_uri = Addressable::URI.parse(url)
-      if request_uri.query
-        params = CGI.parse(request_uri.query)
-        callback_name = Billy.config.dynamic_jsonp_callback_name
-        if params[callback_name].any? && response[:content].match(/\w+\(/)
-          response[:content].sub!(/\w+\(/, params[callback_name].first + '(')
-        end
+
+      return unless request_uri.query
+
+      params = CGI.parse(request_uri.query)
+      callback_name = Billy.config.dynamic_jsonp_callback_name
+      if params[callback_name].any? && response[:content].match(/\w+\(/)
+        response[:content].sub!(/\w+\(/, params[callback_name].first + '(')
       end
     end
   end
