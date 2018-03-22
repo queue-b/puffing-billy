@@ -167,7 +167,7 @@ describe Billy::ProxyHandler do
       end
 
       it 'caches the response if cacheable' do
-        expect(subject).to receive(:allowed_response_code?).and_return(true)
+        expect(subject).to receive(:cacheable_status?).and_return(true)
         expect(Billy::Cache.instance).to receive(:store)
         subject.handle_request(request[:method],
                                request[:url],

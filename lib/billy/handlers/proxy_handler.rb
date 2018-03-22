@@ -30,7 +30,7 @@ module Billy
       response = process_response(req)
       status = response[:status]
 
-      unless allowed_response_code?(status)
+      unless succeeded?(status)
         if Billy.config.non_successful_error_level == :error
           return { error: "[#{method.downcase}] #{url} #{status} for '#{url}' which was not allowed." }
         else
@@ -83,10 +83,6 @@ module Billy
       Billy.config.blacklisted_path?(uri.path) || !Billy.config.whitelisted_url?(uri)
     end
 
-    def allowed_response_code?(status)
-      successful_status?(status)
-    end
-
     def get_opts(url)
       opts = {
         inactivity_timeout: Billy.config.proxied_request_inactivity_timeout,
@@ -129,12 +125,12 @@ module Billy
           Billy.config.blacklisted_path?(url.path))
     end
 
-    def successful_status?(status)
+    def succeeded?(status)
       (200..299).cover?(status) || status == 304
     end
 
     def cacheable_status?(status)
-      Billy.config.non_successful_cache_disabled ? successful_status?(status) : true
+      Billy.config.non_successful_cache_disabled ? succeeded?(status) : true
     end
 
     def bypass_internal_proxy?(url)
